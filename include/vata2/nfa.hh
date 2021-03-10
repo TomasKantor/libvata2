@@ -58,6 +58,11 @@ using StringDict = std::unordered_map<std::string, std::string>;
 
 const PostSymb EMPTY_POST{};
 
+using StateStateSetPair = std::pair<State, StateSet>;
+using StateSetMap = std::unordered_map<StateStateSetPair, State>;
+
+using InMap = std::unordered_map<State, StateSet>;
+using StateToSccNumMap = std::unordered_map<State, unsigned int>;
 /// A transition
 struct Trans
 {
@@ -321,6 +326,24 @@ public:
 	/// gets a post of a set of states over a symbol
 	StateSet post(const StateSet& macrostate, Symbol sym) const;
 
+    unsigned int count_states()
+    {
+        StateSet all_states = this->initialstates;
+
+        for (State state : this->finalstates)
+        {
+            all_states.insert(state);
+        }
+
+        for (Trans transition : *this)
+        {
+            all_states.insert(transition.src);
+            all_states.insert(transition.tgt);
+        }
+
+        return all_states.size();
+    }
+
 	// /// ostream& << operator
 	// friend std::ostream& operator<<(std::ostream& os, const Nfa& nfa)
 	// {
@@ -428,13 +451,20 @@ void intersection(
 	const Nfa&   rhs,
 	ProductMap*  prod_map = nullptr);
 
+/// Compute intersection of a pair of automata, maybe a bit faster
+void intersection_v2(
+    Nfa*        result,
+    const Nfa&  lhs,
+    const Nfa&  rhs,
+    ProductMap* prod_map = nullptr);
+
 inline Nfa intersection(
-	const Nfa&   lhs,
-	const Nfa&   rhs,
-	ProductMap*  prod_map = nullptr)
+    const Nfa&   lhs,
+    const Nfa&   rhs,
+    ProductMap*  prod_map = nullptr)
 { // {{{
 	Nfa result;
-	intersection(&result, lhs, rhs, prod_map);
+    intersection_v2(&result, lhs, rhs, prod_map);
 	return result;
 } // intersection }}}
 
@@ -444,6 +474,14 @@ void determinize(
 	const Nfa&  aut,
 	SubsetMap*  subset_map = nullptr,
 	State*      last_state_num = nullptr);
+
+/// Determinize a scc
+void determinize_scc(
+    Nfa*            result,
+    const Nfa&      aut,
+    const StateSet& ports,
+    SubsetMap*      subset_map = nullptr,
+    State*          last_state_num = nullptr);
 
 inline Nfa determinize(
 	const Nfa&  aut,
@@ -460,6 +498,13 @@ void make_complete(
 	Nfa*             aut,
 	const Alphabet&  alphabet,
 	State            sink_state);
+
+/// makes the transition relation complete for scc
+void make_complete_scc(
+    Nfa*            aut,
+    const Alphabet& alphabet,
+    const StateSet& ports,
+    State           sink_state);
 
 /// Complement
 void complement(
@@ -480,6 +525,14 @@ inline Nfa complement(
 	return result;
 } // complement }}}
 
+void complement(
+    Nfa*            result,
+    const Nfa&      aut_1,
+    const Alphabet& alphabet_1,
+    const Nfa&      aut_2,
+    const Alphabet& alphabet_2,
+    StateSetMap*    state_set_map);
+
 /// Reverting the automaton
 void revert(Nfa* result, const Nfa& aut);
 
@@ -489,6 +542,10 @@ inline Nfa revert(const Nfa& aut)
 	revert(&result, aut);
 	return result;
 } // revert }}}
+
+void remove_unreachables_states(Nfa* result, Nfa& aut);
+
+void remove_useless_states(Nfa* result, Nfa& aut);
 
 /// Removing epsilon transitions
 void remove_epsilon(Nfa* result, const Nfa& aut, Symbol epsilon);

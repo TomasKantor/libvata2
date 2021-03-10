@@ -75,6 +75,21 @@ bool are_disjoint(const std::set<T>& lhs, const std::set<T>& rhs)
 	return true;
 } // }}}
 
+template <class T>
+bool is_subset(const std::set<T>& smaller, const std::set<T>& bigger)
+{ // {{{
+
+	for( auto value : smaller)
+    {
+        if( bigger.find(value) == bigger.end() )
+        {
+            return false;
+        }
+    }
+
+	return true;
+} // }}}
+
 /** Is there an element in a container? */
 template <class T, class Cont>
 bool is_in(const T& elem, const Cont& cont)

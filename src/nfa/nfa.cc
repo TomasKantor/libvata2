@@ -494,6 +494,71 @@ void Vata2::Nfa::intersection(
 	}
 } // intersection }}}
 
+void Vata2::Nfa::intersection_v2(Nfa *result,
+                                 const Nfa &lhs,
+                                 const Nfa &rhs,
+                                 ProductMap *prod_map)
+{ // {{{
+    bool remove_prod_map = false;
+    if (nullptr == prod_map) {
+        remove_prod_map = true;
+        prod_map = new ProductMap();
+    }
+    // counter for names of new states
+    State cnt_state = 0;
+    // list of elements the form <lhs_state, rhs_state, result_state>
+    std::list<std::tuple<State, State, State>> worklist;
+    // translate initial states and initialize worklist
+    for (const auto &lhs_st : lhs.initialstates) {
+        for (const auto &rhs_st : rhs.initialstates) {
+            prod_map->insert({{lhs_st, rhs_st}, cnt_state});
+            result->initialstates.insert(cnt_state);
+            worklist.push_back(std::make_tuple(lhs_st, rhs_st, cnt_state));
+            ++cnt_state;
+        }
+    }
+    while (!worklist.empty()) {
+        State lhs_st, rhs_st, res_st;
+        tie(lhs_st, rhs_st, res_st) = worklist.front();
+        worklist.pop_front();
+        if (haskey(lhs.finalstates, lhs_st) &&
+            haskey(rhs.finalstates, rhs_st)) {
+            result->finalstates.insert(res_st);
+        }
+        PostSymb lhs_post = lhs[lhs_st];
+        PostSymb rhs_post = rhs[rhs_st];
+
+        for (auto lhs_pair : lhs_post) {
+            Symbol symb = lhs_pair.first;
+            StateSet rhs_set_tgt = rhs_post[symb];
+            for (State lhs_tgt : lhs_pair.second) {
+                for (State rhs_tgt : rhs_set_tgt) {
+                    State tgt_state;
+                    ProductMap::iterator it;
+                    bool ins;
+                    tie(it, ins) =
+                        prod_map->insert({{lhs_tgt, rhs_tgt}, cnt_state});
+                    if (ins) {
+                        tgt_state = cnt_state;
+                        ++cnt_state;
+
+                        worklist.push_back({lhs_tgt, rhs_tgt, tgt_state});
+                    }
+                    else {
+                        tgt_state = it->second;
+                    }
+
+                    result->add_trans(res_st, symb, tgt_state);
+                }
+            }
+        }
+
+    }
+
+    if (remove_prod_map) {
+        delete prod_map;
+    }
+} // intersection_v2 }}}
 
 bool Vata2::Nfa::is_lang_empty(const Nfa& aut, Path* cex)
 { // {{{
@@ -684,6 +749,103 @@ void Vata2::Nfa::determinize(
 	}
 } // determinize }}}
 
+void Vata2::Nfa::determinize_scc(
+    Nfa*            result,
+    const Nfa&      aut,
+    const StateSet& ports,
+    SubsetMap*      subset_map,
+    State*          last_state_num)
+{ // {{{
+    assert(nullptr != result);
+
+    bool delete_map = false;
+    if (nullptr == subset_map) 
+    {
+        subset_map = new SubsetMap();
+        delete_map = true;
+    }
+
+    State cnt_state = 0;
+    std::list<std::pair<const StateSet *, State>> worklist;
+
+    for (State port_state : ports) 
+    {
+        auto it_bool_pair = subset_map->insert({{port_state}, cnt_state});
+        worklist.push_back({&it_bool_pair.first->first, cnt_state});
+        ++cnt_state;
+    }
+
+    if (aut.initialstates.size() > 0)
+    {
+
+        if (!haskey(*subset_map, aut.initialstates))
+        {
+            auto it_bool_pair =
+                subset_map->insert({aut.initialstates, cnt_state});
+            worklist.push_back({&it_bool_pair.first->first, cnt_state});
+            result->initialstates = {cnt_state};
+            ++cnt_state;
+        }else
+        {
+            result->initialstates = {subset_map->at(aut.initialstates)};
+        }
+    }
+
+    while (!worklist.empty())
+    {
+        const StateSet *state_set;
+        State new_state;
+        tie(state_set, new_state) = worklist.front();
+        worklist.pop_front();
+        assert(nullptr != state_set);
+
+        // set the state final
+        if (!are_disjoint(*state_set, aut.finalstates))
+        {
+            result->finalstates.insert(new_state);
+        }
+
+        // create the post of new_state
+        PostSymb post_symb;
+        for (State s : *state_set)
+        {
+            for (const auto &symb_post_pair : aut[s])
+            {
+                Symbol symb = symb_post_pair.first;
+                const StateSet &post = symb_post_pair.second;
+                post_symb[symb].insert(post.begin(), post.end());
+                // TODO: consider using post() instead
+            }
+        }
+
+        for (const auto &it : post_symb)
+        {
+            Symbol symb = it.first;
+            const StateSet &post = it.second;
+
+            // insert the new state in the map
+            auto it_bool_pair = subset_map->insert({post, cnt_state});
+            if (it_bool_pair.second)
+            { // if not processed yet, add to the queue
+                worklist.push_back({&it_bool_pair.first->first, cnt_state});
+                ++cnt_state;
+            }
+
+            State post_state = it_bool_pair.first->second;
+            result->add_trans(new_state, symb, post_state);
+        }
+    }
+
+    if (delete_map)
+    {
+        delete subset_map;
+    }
+
+    if (nullptr != last_state_num)
+    {
+        *last_state_num = cnt_state - 1;
+    }
+} // determinize_scc }}}
 
 void Vata2::Nfa::make_complete(
 	Nfa*             aut,
@@ -726,6 +888,54 @@ void Vata2::Nfa::make_complete(
 	}
 } // make_complete }}}
 
+void Vata2::Nfa::make_complete_scc(
+    Nfa*            aut,
+    const Alphabet& alphabet,
+    const StateSet& ports,
+    State           sink_state)
+{ // {{{
+    assert(nullptr != aut);
+
+    std::list<State> worklist(ports.begin(), ports.end());
+
+    for (State initstate : aut->initialstates) 
+    {
+        worklist.push_back(initstate);
+    }
+    std::unordered_set<State> processed(ports.begin(), ports.end());
+    processed.insert(aut->initialstates.begin(), aut->initialstates.end());
+
+    worklist.push_back(sink_state);
+    processed.insert(sink_state);
+
+    while (!worklist.empty()) {
+        State state = *worklist.begin();
+        worklist.pop_front();
+
+        std::set<Symbol> used_symbols;
+        for (const auto &symb_stateset : (*aut)[state]) 
+        {
+            used_symbols.insert(symb_stateset.first);
+
+            const StateSet &stateset = symb_stateset.second;
+            for (const auto &tgt_state : stateset) 
+            {
+                bool inserted;
+                tie(std::ignore, inserted) = processed.insert(tgt_state);
+                if (inserted) 
+                {
+                    worklist.push_back(tgt_state);
+                }
+            }
+        }
+
+        auto unused_symbols = alphabet.get_complement(used_symbols);
+        for (Symbol symb : unused_symbols) 
+        {
+            aut->add_trans(state, symb, sink_state);
+        }
+    }
+} // make_complete_scc }}}
 
 Vata2::Parser::ParsedSection Vata2::Nfa::serialize(
 	const Nfa&                aut,
@@ -936,6 +1146,53 @@ void Vata2::Nfa::minimize(
 	*result = determinize(tmp);
 } // minimize }}}
 
+void Vata2::Nfa::remove_unreachables_states(Nfa* result, Nfa& aut)
+{
+
+    for (State state : aut.initialstates) 
+    {
+        result->add_initial(state);
+    }
+
+    StateSet visited_states;
+    visited_states.insert(aut.initialstates.begin(), aut.initialstates.end());
+
+    std::list<State> work_list;
+    for (State initial_state : aut.initialstates) 
+    {
+        work_list.push_back(initial_state);
+    }
+
+    while (!work_list.empty()) {
+        State state = work_list.front();
+        work_list.pop_front();
+
+        auto post_symb = aut[state];
+        if (aut.has_final(state)) {
+            result->add_final(state);
+        }
+        for (auto x : post_symb) 
+        {
+            for (State state_to : x.second) 
+            {
+                result->add_trans(state, x.first, state_to);
+                if (visited_states.find(state_to) == visited_states.end()) 
+                {
+                    visited_states.insert(state_to);
+                    work_list.push_back(state_to);
+                }
+            }
+        }
+    }
+}
+
+void Vata2::Nfa::remove_useless_states(Nfa *result, Nfa &aut)
+{
+    Nfa reverted = revert(aut);
+    Nfa removed_reverted;
+    remove_unreachables_states(&removed_reverted, reverted);
+    *result = revert(removed_reverted);
+}
 
 void Vata2::Nfa::construct(
 	Nfa*                                 aut,
