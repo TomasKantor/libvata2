@@ -976,7 +976,7 @@ void complement_sccs(
 
     StateSetMap state_state_set_map;
 
-    join_two_sccs_v2
+    join_two_sccs_v2(
         result,
         aut,
         alphabet,
